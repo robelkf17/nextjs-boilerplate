@@ -1,0 +1,251 @@
+# README
+
+This is a minimal, production-ready **Next.js** + **Tailwind CSS** publishing company storefront that supports transactions via **Stripe Checkout**. It's optimized for simple deployment to Vercel (recommended) or Netlify (use their functions for the API route).
+
+## Features
+- Homepage with featured books
+- Product pages (simplified into a single listing example)
+- Cart / Buy button that redirects to **Stripe Checkout**
+- Serverless API route to create Stripe Checkout sessions
+- Tailwind for styling (no custom colors specified)
+
+---
+
+## Quick setup
+1. Clone or copy this project.
+2. `npm install` (Next, React, Stripe, Tailwind)
+3. Create a Stripe account and add Product + Price (one-time) or use Stripe Price IDs.
+4. Set environment variables:
+   - `STRIPE_SECRET_KEY` = your Stripe secret key
+   - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` = your Stripe publishable key (optional for client)
+   - `STRIPE_PRICE_ID_<SLUG>` = price IDs for your products (optional; you can also create prices server-side)
+5. `npm run dev` to run locally.
+6. Deploy to Vercel and set the same environment variables.
+
+---
+
+// File: package.json
+{
+  "name": "publishing-site-nextjs",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14.0.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "stripe": "12.11.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "10.4.14",
+    "postcss": "8.4.23",
+    "tailwindcss": "4.0.12"
+  }
+}
+
+// File: tailwind.config.js
+module.exports = {
+  content: ["./pages/**/*.{js,jsx}", "./components/**/*.{js,jsx}"],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+
+// File: postcss.config.js
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+
+// File: styles/globals.css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #__next {
+  height: 100%;
+}
+
+// File: pages/_app.jsx
+import '../styles/globals.css'
+export default function App({ Component, pageProps }) {
+  return <Component {...pageProps} />
+}
+
+// File: data/products.js
+export const products = [
+  {
+    id: 'book-1',
+    title: 'Rivers of Ink',
+    author: 'A. Author',
+    price_cents: 1999,
+    description: 'A modern collection of essays.',
+    stripe_price_id_env: 'STRIPE_PRICE_ID_BOOK_1',
+    image: '/images/rivers-of-ink.jpg'
+  },
+  {
+    id: 'book-2',
+    title: 'Paper Skies',
+    author: 'B. Writer',
+    price_cents: 1599,
+    description: 'A contemporary novel.',
+    stripe_price_id_env: 'STRIPE_PRICE_ID_BOOK_2',
+    image: '/images/paper-skies.jpg'
+  }
+]
+
+// File: components/ProductCard.jsx
+import React from 'react'
+
+export default function ProductCard({ product, onBuy }){
+  return (
+    <div className="border rounded-2xl p-4 flex flex-col gap-4">
+      <div className="h-48 bg-gray-100 rounded-lg flex items-center justify-center"> 
+        <span className="text-sm">Image placeholder</span>
+      </div>
+      <div>
+        <h3 className="text-lg font-semibold">{product.title}</h3>
+        <p className="text-sm text-gray-600">by {product.author}</p>
+        <p className="mt-2 text-sm">{product.description}</p>
+      </div>
+      <div className="mt-auto flex items-center justify-between">
+        <div className="text-lg font-medium">${(product.price_cents/100).toFixed(2)}</div>
+        <button onClick={() => onBuy(product)} className="px-4 py-2 rounded-xl border">Buy</button>
+      </div>
+    </div>
+  )
+}
+
+// File: pages/index.jsx
+import Head from 'next/head'
+import ProductCard from '../components/ProductCard'
+import { products } from '../data/products'
+
+export default function Home(){
+  async function handleBuy(product){
+    try{
+      const res = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId: product.id })
+      })
+      const data = await res.json()
+      if(data.url) window.location = data.url
+      else alert('Checkout failed')
+    }catch(err){
+      console.error(err)
+      alert('Error creating checkout')
+    }
+  }
+
+  return (
+    <div>
+      <Head>
+        <title>My Publishing Company</title>
+      </Head>
+
+      <main className="max-w-5xl mx-auto p-6">
+        <header className="flex items-center justify-between mb-8">
+          <h1 className="text-3xl font-bold">My Publishing Company</h1>
+          <nav className="space-x-4 text-sm">
+            <a href="#">Catalog</a>
+            <a href="#">About</a>
+            <a href="#">Contact</a>
+          </nav>
+        </header>
+
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {products.map(p => (
+            <ProductCard key={p.id} product={p} onBuy={handleBuy} />
+          ))}
+        </section>
+
+        <footer className="mt-12 text-sm text-gray-600">© {new Date().getFullYear()} My Publishing Company</footer>
+      </main>
+    </div>
+  )
+}
+
+// File: pages/api/create-checkout-session.js
+import Stripe from 'stripe'
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+import { products } from '../../data/products'
+
+export default async function handler(req, res){
+  if(req.method !== 'POST') return res.status(405).end('Method Not Allowed')
+  try{
+    const { productId } = req.body
+    const product = products.find(p => p.id === productId)
+    if(!product) return res.status(400).json({ error: 'Product not found' })
+
+    // Prefer using a pre-created Stripe Price ID set in environment variable for each product.
+    const priceIdFromEnv = process.env[product.stripe_price_id_env]
+
+    let line_item
+    if(priceIdFromEnv){
+      line_item = { price: priceIdFromEnv, quantity: 1 }
+    } else {
+      // Fallback: create a one-time price on-the-fly (not recommended for high-scale)
+      const productObj = await stripe.products.create({ name: product.title })
+      const priceObj = await stripe.prices.create({ unit_amount: product.price_cents, currency: 'usd', product: productObj.id })
+      line_item = { price: priceObj.id, quantity: 1 }
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      line_items: [line_item],
+      // IMPORTANT: replace these with your real domain when deploying
+      success_url: `${process.env.BASE_URL || 'http://localhost:3000'}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.BASE_URL || 'http://localhost:3000'}/`,
+      metadata: { product_id: product.id }
+    })
+
+    return res.status(200).json({ url: session.url })
+  }catch(err){
+    console.error(err)
+    return res.status(500).json({ error: 'Server error' })
+  }
+}
+
+// File: pages/success.jsx
+import { useRouter } from 'next/router'
+import Head from 'next/head'
+export default function Success(){
+  const router = useRouter()
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6">
+      <Head><title>Payment success</title></Head>
+      <div className="max-w-xl text-center">
+        <h2 className="text-2xl font-semibold mb-4">Thank you — your purchase was successful!</h2>
+        <p className="text-sm text-gray-600">We'll email your receipt and shipping info (if applicable).</p>
+        <div className="mt-6">
+          <a href="/" className="underline">Return to site</a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// File: public/_placeholder_instructions.txt
+Add product images to /public/images/ — filenames used in data/products.js. If you don't add images, placeholders will appear.
+
+---
+
+# Notes & Next steps
+- For digital downloads (ebooks) you can store files in a private S3 bucket and fulfill via Stripe webhooks after successful payment — I left that out for simplicity but can add if you want.
+- If you'd like subscriptions (memberships), change `mode` to `subscription` and set `price` to a recurring Price ID.
+- To accept Apple Pay / Google Pay, ensure your Stripe account and domain are configured for Payment Request Button or use Stripe Elements.
+
+If you'd like, I can now:
+- add a webhook endpoint to fulfill orders and email receipts,
+- convert the UI into a multi-page catalog with product detail pages,
+- or make a version using WordPress + WooCommerce (if you'd rather stick with a CMS).
